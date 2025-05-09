@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Buckshot Roulette</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <header>
+            <h1>Buckshot Roulette</h1>
+            <div id="round-info">Раунд: 1</div>
+        </header>
+
+        <div id="dealer-area" class="player-zone">
+            <h2>Дилер <span id="dealer-handcuffed-indicator" class="handcuff-indicator hidden">(в наручниках)</span></h2>
+            <div class="lives-container">
+                Жизни: <span id="dealer-lives"></span>
+                <div id="dealer-charges" class="charges-display"></div>
+            </div>
+            <div class="items-container">
+                Предметы дилера:
+                <div id="dealer-items" class="items-display"></div>
+            </div>
+        </div>
+
+        <div id="shotgun-area">
+            <div id="loaded-cartridges-info"></div>
+            <div id="chamber-visualizer">
+                <!-- Сюда будут добавляться патроны -->
+            </div>
+            <div id="shotgun-status"></div>
+            <div id="shotgun-image-wrapper"> <!-- Обертка для вращения -->
+                <img src="placeholder_shotgun.png" alt="Дробовик" id="shotgun-img">
+            </div>
+            <div id="sawed-off-indicator" class="hidden">ОБРЕЗ АКТИВЕН! (x2 урон)</div>
+        </div>
+
+        <div id="player-area" class="player-zone">
+            <h2>Игрок <span id="player-handcuffed-indicator" class="handcuff-indicator hidden">(в наручниках)</span></h2>
+            <div class="lives-container">
+                Жизни: <span id="player-lives"></span>
+                <div id="player-charges" class="charges-display"></div>
+            </div>
+            <div class="items-container">
+                Ваши предметы:
+                <div id="player-items" class="items-display">
+                    <!-- Сюда будут добавляться кнопки предметов -->
+                </div>
+            </div>
+        </div>
+
+        <div id="item-steal-choice-container" class="hidden">
+            <h3>Выберите предмет для кражи:</h3>
+            <div id="stealable-items-list"></div>
+            <button id="cancel-steal-btn">Отмена</button>
+        </div>
+
+        <div id="actions-area">
+            <button id="shoot-self-btn">Стрелять в себя</button>
+            <button id="shoot-dealer-btn">Стрелять в дилера</button>
+        </div>
+
+        <div id="log-area">
+            <p>Добро пожаловать в Buckshot Roulette!</p>
+        </div>
+
+        <div id="game-over-screen" class="hidden">
+            <h2 id="game-over-message"></h2>
+            <button id="restart-game-btn">Начать заново</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
