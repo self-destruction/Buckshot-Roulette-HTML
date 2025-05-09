@@ -39,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const MAX_ITEMS = 8;
     let roundsWonByPlayer = 0;
     let gameIsOver = false;
+    let isLoadingShells = false; // Flag to prevent multiple reload calls
 
     let initialLiveShells = 0;
     let initialBlankShells = 0;
@@ -46,14 +47,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let shotgunShellsHistory = [];
     let knownShellByMagnifier = null; // { index: number, type: 'live'/'blank' }
 
-    // Задержки для анимаций и действий
-    const SHOTGUN_ROTATION_DURATION = 300; // Должно соответствовать CSS transition на #shotgun-img
-    const SHOTGUN_SHOOT_EFFECT_DURATION = 300; // Длительность CSS анимации .shooting
-    const DAMAGE_ANIMATION_DURATION = 800; // Длительность CSS анимации .damaged
-    const DEALER_TURN_MIN_DELAY = 1500; // Минимальная задержка перед ходом дилера (после всех анимаций)
-    const PLAYER_CONTINUE_DELAY = 500; // Короткая задержка для игрока, если он получает доп. ход
-
-    const animationDelayMedium = 1500; // Для "анимации" зарядки
+    const SHOTGUN_ROTATION_DURATION = 300;
+    const SHOTGUN_SHOOT_EFFECT_DURATION = 300;
+    const DAMAGE_ANIMATION_DURATION = 800;
+    const DEALER_TURN_MIN_DELAY = 1500;
+    const PLAYER_CONTINUE_DELAY = 500;
+    const animationDelayMedium = 1500;
 
     const ITEM_TYPES = {
         CIGARETTES: "Сигареты (+1 жизнь)",
@@ -72,6 +71,11 @@ document.addEventListener('DOMContentLoaded', () => {
         Object.values(ITEM_TYPES)
     ];
 
+    function getMaxLivesForCurrentRound() {
+        const livesConfig = [0, 2, 3, 4]; // Index 0 unused, R1=2, R2=3, R3+=4
+        return livesConfig[Math.min(currentRound, livesConfig.length - 1)] || 2;
+    }
+
     function logMessage(message, type = 'info') {
         if (gameIsOver && (type !== 'important' && !message.toLowerCase().includes("игра окончена") && !message.toLowerCase().includes("победил"))) {
             return;
@@ -81,8 +85,10 @@ document.addEventListener('DOMContentLoaded', () => {
         p.innerHTML = `[${timestamp}] ${message}`;
         if (type === 'player') p.style.color = '#87CEFA';
         else if (type === 'dealer') p.style.color = '#FF7F7F';
-        else if (type === 'important') p.style.color = '#FFFF99';
-        else if (type === 'item') p.style.color = '#90EE90';
+        else if (type === 'important') {
+            p.style.color = '#FFFF99';
+            alert(message);
+        } else if (type === 'item') p.style.color = '#90EE90';
         logAreaEl.appendChild(p);
         logAreaEl.scrollTop = logAreaEl.scrollHeight;
     }
@@ -91,15 +97,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (firstActionInLoadCycle) {
             firstActionInLoadCycle = false;
         }
-        knownShellByMagnifier = null; // Сбрасываем знание от лупы при любом действии после ее использования
+        knownShellByMagnifier = null;
     }
 
     function updateUI() {
-        // if (gameIsOver && !gameOverScreenEl.classList.contains('hidden')) {} // No specific early exit needed here
-
         roundInfoEl.textContent = `Раунд: ${currentRound} (Побед: ${roundsWonByPlayer}/3)`;
-        playerLivesEl.textContent = playerLives;
-        dealerLivesEl.textContent = dealerLives;
+        const maxLives = getMaxLivesForCurrentRound();
+        playerLivesEl.textContent = `${playerLives} / ${maxLives}`;
+        dealerLivesEl.textContent = `${dealerLives} / ${maxLives}`;
 
         playerChargesEl.innerHTML = '';
         for (let i = 0; i < playerLives; i++) { playerChargesEl.appendChild(Object.assign(document.createElement('div'), { className: 'charge' }));}
@@ -110,45 +115,42 @@ document.addEventListener('DOMContentLoaded', () => {
         playerHandcuffedIndicatorEl.classList.toggle('hidden', playerHandcuffedTurns === 0);
 
         if (firstActionInLoadCycle && shotgunChamber.length > 0) {
-            loadedCartridgesInfoEl.textContent = `В дробовике (порядок случаен): ${initialLiveShells} боевых, ${initialBlankShells} холостых.`;
-            loadedCartridgesInfoEl.style.display = 'block';
-            chamberVisualizerEl.innerHTML = '<p style="color:#aaa; font-style:italic;">Патроны скрыты до первого действия</p>';
-        } else {
-            loadedCartridgesInfoEl.style.display = 'none';
-            chamberVisualizerEl.innerHTML = '';
-
-            for (let i = 0; i < shotgunChamber.length; i++) {
-                const shellDiv = document.createElement('div');
-                shellDiv.classList.add('cartridge');
-                if (i < currentCartridgeIndex) { // Уже отстрелянные или извлеченные
-                    const historyShellType = shotgunShellsHistory[i];
-                    if (historyShellType === 'live') {
-                        shellDiv.classList.add('live', 'used-known');
-                        shellDiv.textContent = 'Б';
-                    } else if (historyShellType === 'blank') {
-                        shellDiv.classList.add('blank', 'used-known');
-                        shellDiv.textContent = 'Х';
-                    } else { // Should not happen if history is complete, but as a fallback
-                        shellDiv.classList.add('used');
-                        shellDiv.textContent = 'X';
-                    }
-                } else { // Патрон еще не использован / не извлечен
-                    // BUGFIX 5: Apply magnifier knowledge persistently
-                    if (knownShellByMagnifier && knownShellByMagnifier.index === i) {
-                        shellDiv.classList.add(knownShellByMagnifier.type === 'live' ? 'live' : 'blank', 'revealed-by-magnifier');
-                        shellDiv.textContent = knownShellByMagnifier.type === 'live' ? 'Б' : 'Х';
-                    } else {
-                        shellDiv.classList.add('unknown');
-                        shellDiv.textContent = '?';
-                    }
-                    // Выделение текущего патрона (если он не известен лупой)
-                    if (i === currentCartridgeIndex && !(knownShellByMagnifier && knownShellByMagnifier.index === i)) {
-                        shellDiv.classList.add('current-shell-to-fire');
-                    }
-                }
-                chamberVisualizerEl.appendChild(shellDiv);
-            }
+            alert(`Заряжаем патроны в случайном порядке: ${initialLiveShells} боевых, ${initialBlankShells} холостых.`);
         }
+
+        loadedCartridgesInfoEl.style.display = 'none';
+        chamberVisualizerEl.innerHTML = '';
+
+        for (let i = 0; i < shotgunChamber.length; i++) {
+            const shellDiv = document.createElement('div');
+            shellDiv.classList.add('cartridge');
+            if (i < currentCartridgeIndex) {
+                const historyShellType = shotgunShellsHistory[i];
+                if (historyShellType === 'live') {
+                    shellDiv.classList.add('live', 'used-known');
+                    shellDiv.textContent = 'Б';
+                } else if (historyShellType === 'blank') {
+                    shellDiv.classList.add('blank', 'used-known');
+                    shellDiv.textContent = 'Х';
+                } else {
+                    shellDiv.classList.add('used');
+                    shellDiv.textContent = 'X';
+                }
+            } else {
+                if (knownShellByMagnifier && knownShellByMagnifier.index === i) {
+                    shellDiv.classList.add(knownShellByMagnifier.type === 'live' ? 'live' : 'blank', 'revealed-by-magnifier');
+                    shellDiv.textContent = knownShellByMagnifier.type === 'live' ? 'Б' : 'Х';
+                } else {
+                    shellDiv.classList.add('unknown');
+                    shellDiv.textContent = '?';
+                }
+                if (i === currentCartridgeIndex && !(knownShellByMagnifier && knownShellByMagnifier.index === i)) {
+                    shellDiv.classList.add('current-shell-to-fire');
+                }
+            }
+            chamberVisualizerEl.appendChild(shellDiv);
+        }
+    
         shotgunStatusEl.textContent = `Осталось патронов: ${Math.max(0, shotgunChamber.length - currentCartridgeIndex)}`;
 
         playerItemsEl.innerHTML = '';
@@ -207,7 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (roundsWonByPlayer >= 3) {
                 endGame(true);
             } else {
-                logMessage(`Готовимся к раунду ${currentRound + 1}...`, 'important');
+                logMessage(`Готовимся к раунду ${currentRound + 1}...`, 'info');
                 disablePlayerActions();
                 setTimeout(() => {
                     if (!gameIsOver) {
@@ -219,8 +221,17 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (!gameIsOver && playerLives > 0 && dealerLives > 0 && currentCartridgeIndex >= shotgunChamber.length && shotgunChamber.length > 0) {
-            logMessage("Патроны в дробовике закончились! Заряжаем новые.", 'important');
+        if (!isLoadingShells && !gameIsOver && playerLives > 0 && dealerLives > 0 && currentCartridgeIndex >= shotgunChamber.length && shotgunChamber.length > 0) {
+            isLoadingShells = true; 
+            logMessage("Патроны в дробовике закончились! Заряжаем новые.", 'info');
+            if (playerHandcuffedTurns > 0) {
+                logMessage("Наручники на игроке сняты из-за перезарядки.", 'info');
+                playerHandcuffedTurns = 0;
+            }
+            if (dealerHandcuffedTurns > 0) {
+                logMessage("Наручники на дилере сняты из-за перезарядки.", 'info');
+                dealerHandcuffedTurns = 0;
+            }
             loadNewShells();
         }
     }
@@ -234,6 +245,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function startGame() {
         gameIsOver = false;
+        isLoadingShells = false;
         currentRound = 1;
         roundsWonByPlayer = 0;
         shotgunShellsHistory = [];
@@ -245,9 +257,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function startRound() {
-        logMessage(`--- Начинается Раунд ${currentRound} ---`, 'important');
-        const livesPerRound = [0, 2, 3, 4]; // Index 0 unused
-        const currentRoundMaxLives = livesPerRound[Math.min(currentRound, livesPerRound.length -1)] || 2;
+        logMessage(`--- Начинается Раунд ${currentRound} ---`, 'info');
+        const currentRoundMaxLives = getMaxLivesForCurrentRound();
         playerLives = currentRoundMaxLives;
         dealerLives = currentRoundMaxLives;
         
@@ -274,11 +285,17 @@ document.addEventListener('DOMContentLoaded', () => {
             shotgunChamber = [];
             currentCartridgeIndex = 0;
             const totalShells = Math.floor(Math.random() * 5) + 2; // от 2 до 6
-            let liveS = Math.floor(Math.random() * (totalShells -1)) + 1; // хотя бы 1 боевой
-            if (totalShells === 2 && Math.random() < 0.33) liveS = 2; // шанс на 2 боевых из 2
-            let blankS = totalShells - liveS;
-             if (blankS < 0) blankS = 0; // Ensure blanks are not negative
-             if (liveS === 0 && totalShells > 0) { liveS = 1; blankS = totalShells - 1;} // Ensure at least one live if total > 0
+
+            let liveS;
+            let blankS;
+
+            if (totalShells >= 2) {
+                liveS = Math.floor(Math.random() * (totalShells - 1)) + 1; // Ensures 1 to totalShells-1 live shells
+                blankS = totalShells - liveS; // Ensures at least 1 blank shell
+            } else { // Should not happen with current totalShells logic (min 2)
+                liveS = Math.random() < 0.5 ? 1 : 0;
+                blankS = 1 - liveS;
+            }
 
             initialLiveShells = liveS;
             initialBlankShells = blankS;
@@ -288,14 +305,15 @@ document.addEventListener('DOMContentLoaded', () => {
             shotgunChamber.sort(() => Math.random() - 0.5);
 
             firstActionInLoadCycle = true;
-            logMessage(`Заряжено: ${initialLiveShells} боевых, ${initialBlankShells} холостых. (Информация видна до первого действия)`, 'info');
+            logMessage(`Заряжено: ${initialLiveShells} боевых, ${initialBlankShells} холостых.`, 'info');
             
-            if (currentRound >= 1) { // Items from round 1 onwards based on new rules in availableItemsByRound
-                 const itemsToGiveCount = (currentRound === 1) ? 2 : (currentRound === 2 ? 3 : 4); // Example: 2 items for R1, 3 for R2, 4 for R3+
-                 giveItems(itemsToGiveCount);
+            if (currentRound >= 1) {
+                const itemsToGiveCount = (currentRound === 1) ? 2 : (currentRound === 2 ? 3 : 4);
+                giveItems(itemsToGiveCount);
             }
             isPlayerTurn = true;
             logMessage("Дробовик заряжен. Ход игрока.", 'player');
+            isLoadingShells = false; // Reset flag after shells are loaded
             updateUI();
         }, animationDelayMedium);
     }
@@ -313,37 +331,33 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     }
-    
-    // Consolidated function for executing a shot and handling animations
+
     function executeShot(targetIsPlayer, shooterIsPlayerContext) {
         if (gameIsOver || currentCartridgeIndex >= shotgunChamber.length) return;
         if (shooterIsPlayerContext && (!isPlayerTurn || playerHandcuffedTurns > 0)) return;
 
         makeFirstActionDone();
-        disablePlayerActions(); // Disable buttons during animation sequence
+        disablePlayerActions();
 
-        // 1. AIMING
         const rotationAngle = targetIsPlayer ? '90deg' : '-90deg';
         shotgunImgEl.style.setProperty('--current-shotgun-rotation', rotationAngle);
-        // Adding class for potential specific aim styling if needed, though rotation is via CSS var
         if (targetIsPlayer) shotgunImgEl.classList.add('aim-player'); else shotgunImgEl.classList.add('aim-dealer');
 
-        setTimeout(() => { // After aiming rotation completes
-            // 2. SHOOTING EFFECT
+        setTimeout(() => {
             shotgunImgEl.classList.add('shooting');
             
             const currentShell = shotgunChamber[currentCartridgeIndex];
-            shotgunShellsHistory[currentCartridgeIndex] = currentShell; // Save actual shell type to history
+            shotgunShellsHistory[currentCartridgeIndex] = currentShell;
             
-            logMessage(`${shooterIsPlayerContext ? "Игрок" : "Дилер"} стреляет... Патрон: ${currentShell === 'live' ? 'БОЕВОЙ' : 'ХОЛОСТОЙ'}`, currentShell === 'live' ? 'important' : 'info');
+            logMessage(`${shooterIsPlayerContext ? "Игрок" : "Дилер"} стреляет... Патрон: ${currentShell === 'live' ? 'БОЕВОЙ' : 'ХОЛОСТОЙ'}`, 'info');
             
             let damage = 1;
             const wasSawedOff = sawedOffActive;
             if (sawedOffActive && currentShell === 'live') {
                 damage = 2;
-                logMessage("Ножовка удваивает урон!", 'important');
+                logMessage("Ножовка удваивает урон!", 'info');
             }
-            sawedOffActive = false; // Saw is consumed after one shot attempt
+            sawedOffActive = false;
 
             let hitZoneEl = null;
 
@@ -352,63 +366,56 @@ document.addEventListener('DOMContentLoaded', () => {
                     playerLives -= damage;
                     logMessage(`Выстрел в ${shooterIsPlayerContext ? "себя" : "игрока"}. Боевой! Потеряно ${damage} жизнь(и). ${wasSawedOff ? "(Обрез)" : ""}`, shooterIsPlayerContext ? 'player' : 'dealer');
                     hitZoneEl = document.getElementById('player-area');
-                } else { // Target is dealer
+                } else {
                     dealerLives -= damage;
                     logMessage(`Выстрел в дилера. Боевой! Дилер теряет ${damage} жизнь(и). ${wasSawedOff ? "(Обрез)" : ""}`, shooterIsPlayerContext ? 'player' : 'dealer');
                     hitZoneEl = document.getElementById('dealer-area');
                 }
-                isPlayerTurn = !isPlayerTurn; // Switch turn on live hit
-            } else { // Blank shell
-                if (targetIsPlayer) { // Shot self with blank
+                isPlayerTurn = !isPlayerTurn;
+            } else {
+                if (targetIsPlayer) { 
                     logMessage(`Выстрел в ${shooterIsPlayerContext ? "себя" : "игрока"}. Холостой! ${wasSawedOff ? "(Обрез не сработал)" : ""} ${shooterIsPlayerContext ? "Дополнительный ход." : "Ход переходит к игроку."}`, shooterIsPlayerContext ? 'player' : 'dealer');
-                    if (!shooterIsPlayerContext) isPlayerTurn = true; // Dealer shot player with blank, player's turn
-                    // If player shot self with blank, isPlayerTurn remains true (handled by default)
-                } else { // Shot dealer with blank
+                    if (!shooterIsPlayerContext) isPlayerTurn = true;
+                } else {
                     logMessage(`Выстрел в дилера. Холостой! ${wasSawedOff ? "(Обрез не сработал)" : ""} ${shooterIsPlayerContext ? "Ход переходит к дилеру." : "Дилер получает дополнительный ход."}`, shooterIsPlayerContext ? 'player' : 'dealer');
-                    if (shooterIsPlayerContext) isPlayerTurn = false; // Player shot dealer with blank, dealer's turn
-                    // If dealer shot self with blank, isPlayerTurn remains false
+                    if (shooterIsPlayerContext) isPlayerTurn = false;
                 }
             }
-            currentCartridgeIndex++; // Advance to next shell AFTER processing current one
+            currentCartridgeIndex++;
 
             if (hitZoneEl) {
                 hitZoneEl.classList.add('damaged');
                 setTimeout(() => hitZoneEl.classList.remove('damaged'), DAMAGE_ANIMATION_DURATION);
             }
 
-            // Duration for combined shoot effect and start of damage effect
-            const effectCompletionDelay = Math.max(SHOTGUN_SHOOT_EFFECT_DURATION, DAMAGE_ANIMATION_DURATION / 2); // Wait roughly for main flash of both
+            const effectCompletionDelay = Math.max(SHOTGUN_SHOOT_EFFECT_DURATION, DAMAGE_ANIMATION_DURATION / 2);
 
-            setTimeout(() => { // After shooting visual effect completes
+            setTimeout(() => {
                 shotgunImgEl.classList.remove('shooting');
 
-                // 3. SHOTGUN RETURN
                 shotgunImgEl.style.setProperty('--current-shotgun-rotation', '0deg');
                 shotgunImgEl.classList.remove('aim-player', 'aim-dealer');
 
-                setTimeout(() => { // After shotgun return rotation completes (and damage anim is well underway/finished)
-                    // 4. UPDATE UI AND PROCEED
+                setTimeout(() => {
                     updateUI(); 
 
                     if (!gameIsOver) {
-                        if (!isPlayerTurn) { // If it's now dealer's turn
+                        if (!isPlayerTurn) {
                             setTimeout(dealerTurn, DEALER_TURN_MIN_DELAY);
-                        } else if (playerLives > 0 && dealerLives > 0) { // If it's still player's turn (e.g. blank on self)
+                        } else if (playerLives > 0 && dealerLives > 0) {
                             logMessage("Ваш ход.", 'player');
-                            // Player actions will be re-enabled by updateUI if it's their turn and not handcuffed
                         }
                     }
-                }, SHOTGUN_ROTATION_DURATION + (hitZoneEl ? DAMAGE_ANIMATION_DURATION / 2 : 0) ); // Add some more delay if damage happened
+                }, SHOTGUN_ROTATION_DURATION + (hitZoneEl ? DAMAGE_ANIMATION_DURATION / 2 : 0) );
             }, SHOTGUN_SHOOT_EFFECT_DURATION);
         }, SHOTGUN_ROTATION_DURATION);
     }
-
 
     function useItem(itemName, userType) {
         if (gameIsOver) return;
         if (userType === 'player' && (!isPlayerTurn || playerHandcuffedTurns > 0)) return;
 
-        makeFirstActionDone(); // Using an item counts as an action for revealing shells
+        makeFirstActionDone();
 
         let userItemsArr = (userType === 'player') ? playerItems : dealerItems;
         const itemIndex = userItemsArr.indexOf(itemName);
@@ -419,8 +426,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         switch (itemName) {
             case ITEM_TYPES.CIGARETTES:
-                const livesPerRoundArr = [0, 2, 3, 4];
-                const maxLives = livesPerRoundArr[Math.min(currentRound, livesPerRoundArr.length -1)] || 2;
+                const maxLives = getMaxLivesForCurrentRound();
                 if (userType === 'player') {
                     if (playerLives < maxLives) { playerLives++; logMessage("Восстановлена 1 жизнь.", 'player');}
                     else {logMessage("Жизни уже на максимуме.", 'player');}
@@ -429,7 +435,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     else {logMessage("У дилера жизни на максимуме.", 'dealer');}
                 }
                 break;
-            case ITEM_TYPES.MAGNIFYING_GLASS: // BUGFIX 5: Persistent magnifier effect
+            case ITEM_TYPES.MAGNIFYING_GLASS:
                 if (currentCartridgeIndex < shotgunChamber.length) {
                     const currentShellType = shotgunChamber[currentCartridgeIndex];
                     knownShellByMagnifier = { index: currentCartridgeIndex, type: currentShellType };
@@ -438,24 +444,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     logMessage("Лупа: Патронов нет.", userType === 'player' ? 'player' : 'dealer');
                 }
                 break;
-            case ITEM_TYPES.BEER: // BUGFIX 6: Correct shell ejection
+            case ITEM_TYPES.BEER:
                 if (currentCartridgeIndex < shotgunChamber.length) {
                     const ejectedShell = shotgunChamber[currentCartridgeIndex];
-                    shotgunShellsHistory[currentCartridgeIndex] = ejectedShell; // Mark as "used" by ejection
+                    shotgunShellsHistory[currentCartridgeIndex] = ejectedShell;
                     logMessage(`Пиво: Извлечен патрон (${ejectedShell === 'live' ? 'БОЕВОЙ' : 'ХОЛОСТОЙ'}). Ход сохранен.`, userType === 'player' ? 'player' : 'dealer');
-                    currentCartridgeIndex++; // Advance past the ejected shell ONCE
+                    currentCartridgeIndex++;
                 } else { 
                     logMessage("Пиво: Патронов нет.", userType === 'player' ? 'player' : 'dealer'); 
                 }
                 break;
             case ITEM_TYPES.HANDCUFFS:
                 if (userType === 'player') {
-                    if (dealerHandcuffedTurns === 0) { // Prevent stacking if already handcuffed
-                        dealerHandcuffedTurns = 1; // Skips 1 turn
+                    if (dealerHandcuffedTurns === 0) {
+                        dealerHandcuffedTurns = 1;
                         logMessage("Дилер в наручниках и пропустит следующий ход!", 'player');
                     } else {
                         logMessage("Дилер уже в наручниках.", 'player');
-                         playerItems.push(ITEM_TYPES.HANDCUFFS); // Return item if target already cuffed
+                         playerItems.push(ITEM_TYPES.HANDCUFFS);
                     }
                 } else { 
                     if (playerHandcuffedTurns === 0) {
@@ -463,7 +469,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         logMessage("Вы в наручниках! Пропустите следующий ход.", 'dealer');
                     } else {
                         logMessage("Игрок уже в наручниках. Дилер не смог использовать Наручники.", 'dealer');
-                        dealerItems.push(ITEM_TYPES.HANDCUFFS); // Return item
+                        dealerItems.push(ITEM_TYPES.HANDCUFFS);
                     }
                 }
                 break;
@@ -477,19 +483,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     shotgunChamber[currentCartridgeIndex] = (oldShell === 'live') ? 'blank' : 'live';
                     logMessage(`Инвертор: Тип текущего патрона изменен с ${oldShell === 'live' ? 'БОЕВОГО' : 'ХОЛОСТОГО'} на ${shotgunChamber[currentCartridgeIndex] === 'live' ? 'БОЕВОЙ' : 'ХОЛОСТОЙ'}.`, userType === 'player' ? 'player' : 'dealer');
                     if (knownShellByMagnifier && knownShellByMagnifier.index === currentCartridgeIndex) {
-                        knownShellByMagnifier.type = shotgunChamber[currentCartridgeIndex]; // Update magnifier info
+                        knownShellByMagnifier.type = shotgunChamber[currentCartridgeIndex];
                     }
                 } else { logMessage("Инвертор: Патронов нет.", userType === 'player' ? 'player' : 'dealer'); }
                 break;
             case ITEM_TYPES.PHONE:
-                 if (shotgunChamber.length > currentCartridgeIndex + 1) { // Must be at least one shell *after* current
+                 if (shotgunChamber.length > currentCartridgeIndex + 1) {
                     const inspectableIndices = [];
                     for (let i = currentCartridgeIndex + 1; i < shotgunChamber.length; i++) inspectableIndices.push(i);
                     
                     if (inspectableIndices.length > 0) {
                         const randomFutureIndex = inspectableIndices[Math.floor(Math.random() * inspectableIndices.length)];
                         const revealedShell = shotgunChamber[randomFutureIndex];
-                        const position = randomFutureIndex - currentCartridgeIndex; // 1-based position from current
+                        const position = randomFutureIndex - currentCartridgeIndex;
                         const message = `Телефон: ${position}-й патрон от текущего (${position === 1 ? "следующий" : `через ${position-1}`}) - ${revealedShell === 'live' ? 'БОЕВОЙ' : 'ХОЛОСТОЙ'}.`;
                         if (userType === 'player') alert(message); 
                         logMessage(message, userType === 'player' ? 'player' : 'dealer');
@@ -498,26 +504,44 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case ITEM_TYPES.EXPIRED_MEDS:
                 const isMedSuccess = Math.random() < 0.5;
-                const medMaxLivesArr = [0,2,3,4];
-                const medMaxLives = medMaxLivesArr[Math.min(currentRound, medMaxLivesArr.length -1)] || 2;
+                const medMaxLives = getMaxLivesForCurrentRound();
 
                 if (userType === 'player') {
                     if (isMedSuccess) {
-                        const livesToGain = Math.min(2, medMaxLives - playerLives); // Max 2, up to cap
-                        if (livesToGain > 0) { playerLives += livesToGain; logMessage(`Лекарство: Успех! +${livesToGain} жизни.`, 'player');}
-                        else {logMessage("Лекарство: Успех, но жизни уже на максимуме.", 'player');}
-                    } else { playerLives = Math.max(0, playerLives - 1); logMessage("Лекарство: Провал! -1 жизнь.", 'player');}
+                        const livesToGain = Math.min(2, medMaxLives - playerLives);
+                        if (livesToGain > 0) {
+                            playerLives += livesToGain;
+                            logMessage(`Лекарство: Успех! +${livesToGain} жизни.`, 'player');
+                            alert(`Успех! +${livesToGain} жизни.`);
+                        } else {
+                            logMessage("Лекарство: Успех, но жизни уже на максимуме.", 'player');
+                        }
+                    } else {
+                        playerLives = Math.max(0, playerLives - 1);
+                        logMessage("Лекарство: Провал! -1 жизнь.", 'player');
+                        alert(`Провал! -1 жизнь.`);
+                    }
                 } else { 
                     if (isMedSuccess) {
                         const livesToGain = Math.min(2, medMaxLives - dealerLives);
-                        if (livesToGain > 0) {dealerLives += livesToGain; logMessage(`Лекарство (Дилер): Успех! +${livesToGain} жизни.`, 'dealer');}
-                        else {logMessage("Лекарство (Дилер): Успех, но жизни уже на максимуме.", 'dealer');}
-                    } else { dealerLives = Math.max(0, dealerLives - 1); logMessage("Лекарство (Дилер): Провал! -1 жизнь.", 'dealer');}
+                        if (livesToGain > 0) {
+                            dealerLives += livesToGain;
+                            logMessage(`Лекарство (Дилер): Успех! +${livesToGain} жизни.`, 'dealer');
+                            alert(`Дилер использует Лекарство: Успех! +${livesToGain} жизни.`);
+                        } else {
+                            logMessage("Лекарство (Дилер): Успех, но жизни уже на максимуме.", 'dealer');
+                            alert("Дилер использует Лекарство: Успех, но жизни уже на максимуме.");
+                        }
+                    } else {
+                        dealerLives = Math.max(0, dealerLives - 1);
+                        logMessage("Лекарство (Дилер): Провал! -1 жизнь.", 'dealer');
+                        alert("Дилер использует Лекарство: Провал! -1 жизнь.");
+                    }
                 }
                 break;
             case ITEM_TYPES.ADRENALINE:
                 if (userType === 'player') {
-                    let stealableItemsFromDealer = dealerItems.filter(item => item !== ITEM_TYPES.ADRENALINE); // Cannot steal Adrenaline itself
+                    let stealableItemsFromDealer = dealerItems.filter(item => item !== ITEM_TYPES.ADRENALINE);
                     if (stealableItemsFromDealer.length > 0) {
                         itemStealChoiceContainerEl.classList.remove('hidden');
                         stealableItemsListEl.innerHTML = ''; 
@@ -530,29 +554,29 @@ document.addEventListener('DOMContentLoaded', () => {
                                 if (stolenItemIndex > -1) {
                                     const actuallyStolenItem = dealerItems.splice(stolenItemIndex, 1)[0];
                                     logMessage(`Адреналин: Вы украли "${actuallyStolenItem}" у дилера. Используете немедленно.`, 'player');
-                                    // Add to player's hand, then use it. This allows player to choose WHEN to use it if it's not immediate.
-                                    // For now, per original logic, use immediately.
-                                    playerItems.push(actuallyStolenItem); // Temporarily add to use it
+                                    playerItems.push(actuallyStolenItem);
                                     useItem(actuallyStolenItem, 'player'); 
                                 } else { updateUI(); } 
                             };
                             stealableItemsListEl.appendChild(btn);
                         });
-                        return; // UI updated after choice or cancel
+                        return;
                     } else {
                         logMessage("Адреналин: У дилера нет подходящих предметов для кражи.", 'player');
                     }
-                } else { // Дилер использует Адреналин
+                } else {
                     let stealableFromPlayer = playerItems.filter(item => item !== ITEM_TYPES.ADRENALINE);
                     if (stealableFromPlayer.length > 0) {
                         const stolenItemName = stealableFromPlayer[Math.floor(Math.random() * stealableFromPlayer.length)];
                         const stolenIdx = playerItems.indexOf(stolenItemName);
                         if (stolenIdx > -1) {
                            const actuallyStolenItem = playerItems.splice(stolenIdx, 1)[0];
-                           logMessage(`Адреналин: Дилер украл у вас "${actuallyStolenItem}" и немедленно использует.`, 'dealer');
-                           dealerItems.push(actuallyStolenItem); // Add to dealer's hand to use
+                           const stealMsg = `Адреналин: Дилер украл у вас "${actuallyStolenItem}" и немедленно использует.`;
+                           logMessage(stealMsg, 'dealer');
+                           alert(stealMsg);
+                           dealerItems.push(actuallyStolenItem);
                            useItem(actuallyStolenItem, 'dealer');
-                           return; // updateUI will be called by the recursive useItem
+                           return;
                         }
                     } else {
                         logMessage("Адреналин (Дилер): У вас нет подходящих предметов для кражи.", 'dealer');
@@ -561,12 +585,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
         }
         
-        updateUI(); // Общий вызов после большинства предметов
-
-        // Check for game state changes after item use (e.g., Beer emptying chamber, Meds causing death)
-        // updateUI already handles most of these checks (end of round, game over, reload shells)
-        // If it's still player's turn and game isn't over, they can make another move.
-        // Dealer's turn after item use will be handled by dealerTurn logic if it was dealer's item.
+        updateUI();
     }
 
     cancelStealBtnEl.onclick = () => {
@@ -579,10 +598,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (gameIsOver || isPlayerTurn || playerLives <= 0 || dealerLives <= 0) return;
 
         logMessage("Ход дилера...", 'dealer');
-        disablePlayerActions(); // Ensure player cannot act during dealer's turn visuals
+        disablePlayerActions();
 
         if (dealerHandcuffedTurns > 0) {
-            logMessage("Дилер в наручниках и пропускает ход.", 'dealer');
+            logMessage("Дилер в наручниках и пропускает ход.", 'important');
             dealerHandcuffedTurns--;
             isPlayerTurn = true;
             updateUI(); 
@@ -595,55 +614,52 @@ document.addEventListener('DOMContentLoaded', () => {
 
         function dealerItemLogic() {
             if (itemUsedThisAiCycle || gameIsOver || currentCartridgeIndex >= shotgunChamber.length) return false;
-            
-            // Priority 1: Magnifying Glass if shell is unknown
+
             if (!knownCurrentShellTypeByAI && dealerItems.includes(ITEM_TYPES.MAGNIFYING_GLASS)) {
-                logMessage("Дилер использует Лупу.", 'dealer');
-                useItem(ITEM_TYPES.MAGNIFYING_GLASS, 'dealer'); // This will set knownShellByMagnifier
-                knownCurrentShellTypeByAI = shotgunChamber[currentCartridgeIndex]; // AI knows it now
+                logMessage("Дилер использует Лупу.", 'important');
+                useItem(ITEM_TYPES.MAGNIFYING_GLASS, 'dealer'); 
+                knownCurrentShellTypeByAI = shotgunChamber[currentCartridgeIndex]; 
                 itemUsedThisAiCycle = true; 
                 return true;
             }
             
-            // Further item logic can be more complex based on knownCurrentShellTypeByAI
-            const maxDealerLives = ([0,2,3,4][Math.min(currentRound, 3)] || 2);
+            const maxDealerLives = getMaxLivesForCurrentRound();
             if (dealerLives < maxDealerLives && dealerItems.includes(ITEM_TYPES.CIGARETTES) && dealerLives <=1) {
-                 logMessage("Дилер использует Сигареты.", 'dealer');
-                 useItem(ITEM_TYPES.CIGARETTES, 'dealer');
-                 itemUsedThisAiCycle = true; return true;
+                logMessage("Дилер использует Сигареты.", 'important');
+                useItem(ITEM_TYPES.CIGARETTES, 'dealer');
+                itemUsedThisAiCycle = true; return true;
             }
-            if (dealerItems.includes(ITEM_TYPES.EXPIRED_MEDS) && dealerLives <= maxDealerLives / 2 && Math.random() < 0.6) { //少し積極的
-                logMessage("Дилер использует Лекарство.", 'dealer');
+            if (dealerItems.includes(ITEM_TYPES.EXPIRED_MEDS) && dealerLives <= maxDealerLives / 2 && Math.random() < 0.6) {
+                logMessage("Дилер использует Лекарство.", 'info');
                 useItem(ITEM_TYPES.EXPIRED_MEDS, 'dealer');
                 itemUsedThisAiCycle = true; return true;
             }
 
             if (knownCurrentShellTypeByAI === 'live' && dealerItems.includes(ITEM_TYPES.BEER)) {
-                if (playerLives > 1 || dealerLives === 1) { // Don't eject live if player is 1 HP unless dealer is also 1 HP
-                     logMessage("Дилер использует Пиво, чтобы извлечь боевой патрон.", 'dealer');
-                     useItem(ITEM_TYPES.BEER, 'dealer');
-                     knownCurrentShellTypeByAI = null; 
-                     itemUsedThisAiCycle = true; return true;
+                if (playerLives > 1 || dealerLives === 1) { 
+                    logMessage("Дилер использует Пиво, чтобы извлечь боевой патрон.", 'important');
+                    useItem(ITEM_TYPES.BEER, 'dealer');
+                    knownCurrentShellTypeByAI = null; 
+                    itemUsedThisAiCycle = true; return true;
                 }
             }
             if (dealerItems.includes(ITEM_TYPES.SAW) && !sawedOffActive && 
-                (knownCurrentShellTypeByAI === 'live' || (playerLives === 1 && initialLiveShells > initialBlankShells))) { // Use saw if known live or good chance to finish
-                logMessage("Дилер использует Ножовку.", 'dealer');
+                (knownCurrentShellTypeByAI === 'live' || (playerLives === 1 && initialLiveShells > initialBlankShells))) {
+                logMessage("Дилер использует Ножовку.", 'important');
                 useItem(ITEM_TYPES.SAW, 'dealer');
                 itemUsedThisAiCycle = true; return true;
             }
-             if (dealerItems.includes(ITEM_TYPES.HANDCUFFS) && playerHandcuffedTurns === 0 && 
-                (playerItems.length >=2 || (playerLives ===1 && dealerLives > 1 && Math.random() < 0.7))) { // Cuff if player has items or to secure win
-                logMessage("Дилер использует Наручники.", 'dealer');
+            if (dealerItems.includes(ITEM_TYPES.HANDCUFFS) && playerHandcuffedTurns === 0 && 
+                (playerItems.length >=2 || (playerLives ===1 && dealerLives > 1 && Math.random() < 0.7))) {
+                logMessage("Дилер использует Наручники.", 'important');
                 useItem(ITEM_TYPES.HANDCUFFS, 'dealer'); 
                 itemUsedThisAiCycle = true; return true; 
             }
-            // Adrenaline if dealer has few items and player has more, or to find a crucial item
             if (dealerItems.length < 2 && playerItems.length > dealerItems.length && dealerItems.includes(ITEM_TYPES.ADRENALINE) && Math.random() < 0.5) {
-                logMessage("Дилер использует Адреналин.", 'dealer');
+                logMessage("Дилер использует Адреналин.", 'important');
                 useItem(ITEM_TYPES.ADRENALINE, 'dealer');
-                itemUsedThisAiCycle = true; // Adrenaline itself is one item action
-                return true; // The stolen item use is part of Adrenaline's effect
+                itemUsedThisAiCycle = true;
+                return true;
             }
 
 
@@ -651,27 +667,23 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (dealerItemLogic()) {
-            // Item was used. updateUI was called.
-            // If game state changed significantly (e.g. no more shells from Beer), updateUI handles it.
-            // Give a moment for player to see item effect, then re-evaluate or shoot.
             if (!isPlayerTurn && !gameIsOver) { 
                 setTimeout(dealerTurn, DEALER_TURN_MIN_DELAY); 
-            } else if (isPlayerTurn && !gameIsOver) { // Unlikely, but if item gave turn to player
-                 logMessage("Ваш ход.", 'player');
-                 updateUI(); // Ensure buttons are correct
+            } else if (isPlayerTurn && !gameIsOver) {
+                logMessage("Ваш ход.", 'player');
+                updateUI();
             }
             return; 
         }
 
-        // --- Decision to shoot (if no item was used or after item use didn't end turn/round) ---
         if (currentCartridgeIndex >= shotgunChamber.length) {
             if (!gameIsOver) { 
-                 updateUI(); // This should trigger loadNewShells if needed
+                updateUI();
             }
             return;
         }
         
-        let shootTargetIsPlayer; // true for player, false for self (dealer)
+        let shootTargetIsPlayer;
         const remainingShells = shotgunChamber.slice(currentCartridgeIndex);
         const remainingBlanks = remainingShells.filter(s => s === 'blank').length;
         const remainingLivesInGun = remainingShells.filter(s => s === 'live').length;
@@ -684,16 +696,15 @@ document.addEventListener('DOMContentLoaded', () => {
             logMessage("Дилер знает, что патрон холостой. Стреляет в себя (доп. ход).", 'dealer');
         } else {
             // Simple AI based on probabilities and game state
-            if (dealerLives === 1 && playerLives > 1 && remainingBlanks > 0 && remainingLivesInGun > 0) { // Risky self-shot if dealer is low
-                shootTargetIsPlayer = (remainingBlanks / remainingShells.length) > 0.6; // Only if high chance of blank
+            if (dealerLives === 1 && playerLives > 1 && remainingBlanks > 0 && remainingLivesInGun > 0) {
+                shootTargetIsPlayer = (remainingBlanks / remainingShells.length) > 0.6;
             } else if (playerLives === 1 && remainingLivesInGun > 0) {
-                shootTargetIsPlayer = true; // Try to finish player
-            } else if (remainingLivesInGun === 0 && remainingBlanks > 0) { // Only blanks left
+                shootTargetIsPlayer = true;
+            } else if (remainingLivesInGun === 0 && remainingBlanks > 0) {
                 shootTargetIsPlayer = false;
-            } else if (remainingBlanks === 0 && remainingLivesInGun > 0) { // Only lives left
+            } else if (remainingBlanks === 0 && remainingLivesInGun > 0) {
                 shootTargetIsPlayer = true;
             }
-            // Default cautious: shoot self if more blanks or equal, shoot player if more lives
             else if (remainingBlanks >= remainingLivesInGun && remainingBlanks > 0) {
                 shootTargetIsPlayer = false; 
             } else {
@@ -701,7 +712,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             logMessage(`Дилер ${shootTargetIsPlayer ? "стреляет в игрока" : "рискует выстрелить в себя"}. (Неизвестный патрон)`, 'dealer');
         }
-        executeShot(shootTargetIsPlayer, false); // false indicates shooter is Dealer
+        executeShot(shootTargetIsPlayer, false);
     }
 
     function endGame(playerWonGame) {
@@ -709,9 +720,8 @@ document.addEventListener('DOMContentLoaded', () => {
         gameIsOver = true;
 
         gameOverScreenEl.classList.remove('hidden');
-        shotgunImgEl.style.setProperty('--current-shotgun-rotation', '0deg'); // Reset shotgun image
+        shotgunImgEl.style.setProperty('--current-shotgun-rotation', '0deg');
         shotgunImgEl.classList.remove('aim-player', 'aim-dealer', 'shooting');
-
 
         if (playerWonGame) {
             gameOverMessageEl.textContent = "Поздравляем! Вы победили Дилера в 3 раундах!";
@@ -728,13 +738,13 @@ document.addEventListener('DOMContentLoaded', () => {
     shootSelfBtn.addEventListener('click', () => {
         if (!isPlayerTurn || gameIsOver || playerHandcuffedTurns > 0) return;
         logMessage("Игрок решает выстрелить в себя.", 'player');
-        executeShot(true, true); // targetIsPlayer=true, shooterIsPlayerContext=true
+        executeShot(true, true);
     });
 
     shootDealerBtn.addEventListener('click', () => {
         if (!isPlayerTurn || gameIsOver || playerHandcuffedTurns > 0) return;
         logMessage("Игрок решает выстрелить в дилера.", 'player');
-        executeShot(false, true); // targetIsPlayer=false, shooterIsPlayerContext=true
+        executeShot(false, true);
     });
 
     restartGameBtn.addEventListener('click', startGame);
