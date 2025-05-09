@@ -10,7 +10,7 @@
 
 ## Поиграть
 
-https://confused-snowy-crib.glitch.me
+https://dolomite-assorted-breadfruit.glitch.me
 
 ## Как играть
 
